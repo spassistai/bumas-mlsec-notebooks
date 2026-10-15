@@ -5,13 +5,18 @@ trained from scratch on n_member CIFAR-10 images; pixel-MSE(x0, x1) is the
 per-sample attack score (Carlini et al., IEEE S&P 2022: log-log ROC, TPR@low-FPR
 is the convention this script's own plots follow).
 
-Imports the model/training/round-trip code from the user's own research repo
-via sys.path (no copies) — see README.md for the exact modules and the member
-permutation this script reproduces bit-for-bit. Never trains: refuses to run
-if the expected checkpoint is missing.
+This is the script that produced the lecture slide's assets
+(courses/bumas/public/demos/mia/). It needs the lecturer's own research code
+and checkpoints, which are not published: pass their location with
+--research-repo (or MIA_RESEARCH_REPO); there is no default. The model,
+training and round-trip code are imported from there via sys.path (no
+copies). Never trains: refuses to run if the expected checkpoint is missing.
+
+To run the attack yourself, use mia.ipynb instead — it is self-contained
+(trains its own small DDPM on CIFAR-10, Colab-ready).
 """
 from __future__ import annotations
-import argparse, json, sys
+import argparse, json, os, sys
 from pathlib import Path
 
 import numpy as np
@@ -27,13 +32,21 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-RESEARCH_REPO = Path.home() / "claude_code" / "test" / "mia_inference_loop"
-sys.path.insert(0, str(RESEARCH_REPO))
-import experiments.member_vs_nonmember_ddpm_cifar_scratch as _mvn             # noqa: E402
-from experiments.member_vs_nonmember_ddpm_cifar_scratch import (              # noqa: E402
-    train_or_load_small_ddpm, DDIM_STEPS, EPOCHS_DEFAULT, NUM_TRAIN_TIMESTEPS,
-)
-from experiments.ddpm_cifar_common import sdedit_loop_with_snapshots          # noqa: E402
+_mvn = train_or_load_small_ddpm = sdedit_loop_with_snapshots = None
+DDIM_STEPS = EPOCHS_DEFAULT = NUM_TRAIN_TIMESTEPS = None
+
+
+def load_research_code(repo: Path):
+    """Import the research helpers from `repo` (given on the command line)."""
+    global _mvn, train_or_load_small_ddpm, sdedit_loop_with_snapshots
+    global DDIM_STEPS, EPOCHS_DEFAULT, NUM_TRAIN_TIMESTEPS
+    assert repo.is_dir(), f"research repo not found: {repo}"
+    sys.path.insert(0, str(repo))
+    import experiments.member_vs_nonmember_ddpm_cifar_scratch as _mvn
+    from experiments.ddpm_cifar_common import sdedit_loop_with_snapshots
+    train_or_load_small_ddpm = _mvn.train_or_load_small_ddpm
+    DDIM_STEPS, EPOCHS_DEFAULT = _mvn.DDIM_STEPS, _mvn.EPOCHS_DEFAULT
+    NUM_TRAIN_TIMESTEPS = _mvn.NUM_TRAIN_TIMESTEPS
 
 TEAL, SLATE, RED = "#0f766e", "#475569", "#dc2626"
 TEST_SEED = 1234
@@ -165,15 +178,24 @@ def plot_auroc_vs_n(probe_dir: Path, out_path: Path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt-dir", default=str(RESEARCH_REPO / "results" / "small_ddpm_ckpt_cache"))
-    ap.add_argument("--data-root", default=str(RESEARCH_REPO / "data"))
-    ap.add_argument("--probe-dir", default=str(RESEARCH_REPO / "results" / "mechanism_probe_ddpm"))
+    env_repo = os.environ.get("MIA_RESEARCH_REPO")
+    ap.add_argument("--research-repo", default=env_repo, required=env_repo is None,
+                    help="checkout of the (unpublished) research code; or set MIA_RESEARCH_REPO")
+    ap.add_argument("--ckpt-dir", help="default: <research-repo>/results/small_ddpm_ckpt_cache")
+    ap.add_argument("--data-root", help="default: <research-repo>/data")
+    ap.add_argument("--probe-dir", help="default: <research-repo>/results/mechanism_probe_ddpm")
     ap.add_argument("--n", type=int, nargs="+", default=[500, 10000])
     ap.add_argument("--per-group", type=int, default=500)
     ap.add_argument("--t-edit", type=float, default=0.25)
-    ap.add_argument("--epochs", type=int, default=EPOCHS_DEFAULT)
+    ap.add_argument("--epochs", type=int, help="default: the research code's EPOCHS_DEFAULT")
     ap.add_argument("--out", default="out")
     args = ap.parse_args()
+    repo = Path(args.research_repo).expanduser()
+    load_research_code(repo)
+    args.ckpt_dir = args.ckpt_dir or str(repo / "results" / "small_ddpm_ckpt_cache")
+    args.data_root = args.data_root or str(repo / "data")
+    args.probe_dir = args.probe_dir or str(repo / "results" / "mechanism_probe_ddpm")
+    args.epochs = args.epochs or EPOCHS_DEFAULT
 
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
 

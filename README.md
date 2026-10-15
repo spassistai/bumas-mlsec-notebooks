@@ -1,5 +1,7 @@
 # BUMAS — Machine Learning Security: demo notebooks
 
+> Updated by a script from the course repository (`npm run notebooks:sync`) — do not edit by hand; changes made here are overwritten on the next sync.
+
 Companion notebooks for the lecture *Machine Learning Security* (course BUMAS). Each folder
 holds a Jupyter notebook, the equivalent script and a README with how to run it on CPU.
 Open any notebook in Google Colab:
@@ -20,6 +22,6 @@ Colab link pattern: `https://colab.research.google.com/github/spassistai/bumas-m
 - GTSRB: Stallkamp, Schlipsing, Salmen, Igel, "Man vs. computer: Benchmarking machine learning
   algorithms for traffic sign recognition", Neural Networks 32 (2012). Downloaded by torchvision at run time.
 - Olivetti faces (AT&T Laboratories Cambridge), via scikit-learn; only class-mean images are shown in the course.
-- The MIA notebook uses checkpoints and helper code from the author's research project (see `mia/README.md`).
+- CIFAR-10 (Krizhevsky, 2009), downloaded by torchvision at run time; the MIA notebook trains its own small DDPM on it (see `mia/README.md`).
 
-This repository mirrors `courses/bumas/demos/` of the (private) course repository; edits are made there and re-pushed here.
+This repository mirrors `courses/bumas/demos/` of the (private) course repository; edits are made there and published here by the sync script.

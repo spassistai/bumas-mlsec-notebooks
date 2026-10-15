@@ -5,108 +5,113 @@ One SDEdit round-trip against a small DDPM trained from scratch on CIFAR-10.
 training set — **if** the model overfit. The log-log ROC / TPR@low-FPR
 reporting convention follows Carlini et al. ("Membership Inference Attacks
 From First Principles," IEEE S&P 2022) — that paper is cited for the
-*evaluation convention*, not for this attack's numbers, which are the user's
-own.
+*evaluation convention*, not for this attack's numbers, which are the
+lecturer's own.
 
-Source of the numbers: the user's own research project,
-`~/claude_code/test/mia_inference_loop`, `RESULTS.md` §§14–16 (2026-09-10).
-Headline: single-shot pixel-MSE AUROC ≈ 0.996 at `n_member = 500`, falling to
-≈ 0.57 at `n_member = 20000`; the fully-pretrained `google/ddpm-cifar10-32`
-(50k images) shows **no** signal at all (§8; scorecard H3: "memorization-gated,
-not architecture-inherent"). This demo recomputes those numbers itself — see
-`results.json` for the run in this repo — it does not just copy the research
-report's figures.
+`mia.ipynb` is self-contained: it downloads CIFAR-10, trains the target DDPM
+itself, runs the attack and plots the results. Nothing outside this folder is
+needed.
 
-**Single seed.** Every number here is seed 0. The research repo's RESULTS.md
-§15 reports 3-replica-averaged scores (TPR@1%FPR 0.970 at n=500, 0.066 at
-n=10000; TPR@5%FPR 0.162 at n=10000); this script's single round-trip (no
-averaging, per the lecture spec) lands close on AUROC (0.9955 vs the §14
-single-shot figure of 0.996364) but diverges more on the tail TPR numbers,
-since those are noisier with one replica and no averaging smooths them out.
-Do not quote "0.996" without saying "n=500, seed 0, single replica."
+## Where the slide's numbers come from
 
-## Mechanism (RESULTS.md §16, H5′)
+The figures on the lecture slide "Members come back unchanged"
+(`courses/bumas/public/demos/mia/`) come from **the lecturer's own research
+run (not included in this repository)**: the same single round-trip attack
+(t_edit = 0.25, DDIM 25 steps) against small DDPMs trained for 400 epochs per
+model. Headline: single-shot pixel-MSE AUROC ≈ 0.996 at `n_member = 500`,
+≈ 0.65 at `n_member = 10000`, ≈ 0.57 at `n_member = 20000`; the
+fully-pretrained `google/ddpm-cifar10-32` (50k images) shows **no** signal at
+all — the leak is memorization-gated, not architecture-inherent.
+
+The notebook reproduces the **method**, not those exact numbers. It trains
+its own, smaller model for a Colab-sized budget (5000 training steps, about
+9–15 minutes on a free T4), so expect a clear membership signal at
+`n_member = 500` — AUROC ≈ 0.99 at 5000 steps in our training sweep on an
+Apple M4; 4000 steps gave 0.935–0.97, which is why the default is 5000 — but
+not the slide's figures, and somewhat different numbers on every run.
+
+**Single seed.** Every number — the slide's and the notebook's — is one
+training seed and one SDEdit noise draw per image. AUROC is fairly stable;
+the tail TPR numbers are much noisier (TPR@1%FPR rests on the 5
+lowest-scoring of 500 non-members). Do not quote "0.996" without saying
+"n=500, seed 0, single replica."
+
+## Mechanism
 
 Members behave as **fixed points of the score field** — one round-trip barely
 moves them. Non-members get pulled toward the nearest memorized training
 mode and therefore move much further; the pixel-MSE gap is the signal.
 Confirmed negative result worth keeping in mind: **iterating does not help**
-(H4, §14/§16) — the attack is strongest at a single step (k=1) and decays as
-you repeat the loop, which is why this demo is one round-trip, not a loop.
+— in the research run the attack is strongest at a single step (k=1) and
+decays as you repeat the loop, which is why this demo is one round-trip, not
+a loop (exercise 2 in the notebook lets you check it).
 
 ## Running
 
-```bash
-# venv needs: torch, torchvision, diffusers, scikit-learn, matplotlib
-python mia_roundtrip.py \
-  --ckpt-dir ~/claude_code/test/mia_inference_loop/results/small_ddpm_ckpt_cache \
-  --n 500 10000 --per-group 500 --t-edit 0.25 \
-  --out ../../public/demos/mia
-```
+**Google Colab (recommended).** Open `mia.ipynb` via the "Open in Colab"
+button on the slide (or
+`https://colab.research.google.com/github/spassistai/bumas-mlsec-notebooks/blob/main/mia/mia.ipynb`),
+check *Runtime → Change runtime type → T4 GPU* (the notebook asks for a GPU
+runtime in its metadata), then *Runtime → Run all*. Colab already has torch,
+torchvision, scikit-learn and matplotlib; the first code cell installs
+`diffusers` if it is missing.
 
-The script imports the model definition, training loop and SDEdit round-trip
-from the research repo via `sys.path` (`experiments/member_vs_nonmember_ddpm_cifar_scratch.py`
-→ `build_small_unet`, `train_or_load_small_ddpm`; `experiments/ddpm_cifar_common.py`
-→ `sdedit_loop_with_snapshots`) — nothing is copied or retrained. Checkpoints
-already exist in `results/small_ddpm_ckpt_cache/small_ddpm_cifar_n{500,10000}_e400_s0_*.pt`;
-if the hash the loader computes does not match a cached file it will **train
-from scratch**, which this demo's budget does not allow — if that happens,
-stop and report rather than let it train.
-
-The member/non-member split is reproduced bit-for-bit from
-`experiments/single_shot_auroc_ddpm.py`: `torch.Generator().manual_seed(0)`
-on the CIFAR-10 train set gives the member pool (first `n_member` indices);
-`torch.Generator().manual_seed(1234)` on the CIFAR-10 test set gives the
-non-member pool. Get this split wrong and member/non-member labels silently
-swap — verify against the published n=500 AUROC (≈0.99) before trusting any
-figure downstream (done here: this run measured 0.994).
-
-Outputs written to `--out`:
-
-- `member_before.png` / `member_after.png`, `nonmember_before.png` / `nonmember_after.png`
-  — 7 examples each (nearest-neighbour style grid, like the BadNets demo).
-  Member example = smallest-MSE member; non-member example = **median**-MSE
-  non-member (not the most extreme one — a representative case).
-- `roc_loglog.png` — ROC on log-log axes for n=500 and n=10000, each curve's
-  TPR@1%FPR marked (Carlini et al. 2022 convention — the P3 rubric slide
-  earlier in this deck uses the same axes).
-- `auroc_vs_n.png` — single-shot pixel-MSE AUROC vs. `n_member`, seed 0, read
-  straight from `results/mechanism_probe_ddpm/n*_s0.json`
-  (`stage_A_single_shot.auroc_pixel_mse`) — not recomputed, since those
-  checkpoints cover `n_member` values (100…20000) this demo's time budget
-  does not re-run.
-- `results.json` — `{n: {auroc, tpr_at_1pct, tpr_at_5pct, mse_member_mean,
-  mse_nonmember_mean, per_group}, examples: {member_idx, nonmember_idx, mse}}`
-  for this run.
-
-`mia.ipynb` holds the same code as notebook cells; its outputs are stored
-empty.
-
-## Reproducing the checkpoints
-
-Checkpoints are not retrained by this demo. To regenerate them from scratch
-(GPU recommended — CPU training of `n_member=10000` for 400 epochs is not
-something this demo's 30-minute budget covers):
+**Locally.**
 
 ```bash
-cd ~/claude_code/test/mia_inference_loop
-python -m experiments.train_all_scratch_ddpms --n_members 500 10000 --seeds 0 --device cuda:0
+pip install torch torchvision diffusers scikit-learn matplotlib jupyter
+jupyter notebook mia.ipynb
 ```
+
+The notebook picks CUDA, then Apple-silicon MPS, then CPU. On an Apple M4
+(MPS) the default config takes about 27 minutes; on CPU it takes hours —
+lower `TRAIN_STEPS` to try the code. The environment variables
+`MIA_TRAIN_STEPS=<n>` and `MIA_RUN_LARGE=1` override the config (meant for
+headless smoke tests; in Colab just edit the config cell).
+
+`mia_roundtrip.py` is **not** needed to run the demo. It is the script that
+produced the slide's assets from the research run's checkpoints, kept so the
+slide's code panel shows the code that made its numbers. It imports the
+research code (not published) and refuses to start without
+`--research-repo <path>` (or `MIA_RESEARCH_REPO`); it never trains. Its
+attack core — `roundtrip`, `mse`, `tpr_at`, `auroc_tpr` — is the same method
+as the notebook's.
+
+The member/non-member split follows the research code's convention:
+`torch.Generator().manual_seed(0)` on the CIFAR-10 train set gives the member
+pool (first `n_member` indices); `torch.Generator().manual_seed(1234)` on the
+CIFAR-10 test set gives the non-member pool. Get this split wrong and
+member/non-member labels silently swap.
+
+Outputs written to `out/`:
+
+- `roc_loglog.png` — ROC on log-log axes, TPR@1%FPR marked (Carlini et al.
+  2022 convention; the optional larger-n run adds a second curve).
+- `members.png`, `nonmembers.png` — the first eight images of each group
+  before and after one round-trip, with their pixel-MSE.
+- `mse_hist.png` — member vs. non-member MSE histograms.
+- `results.json` — the config and `{auroc, tpr_at_1pct, tpr_at_5pct,
+  mse_member_mean, mse_nonmember_mean}` per trained model.
+
+TPR@x%FPR is read off the ROC as a step function (the best TPR among
+thresholds with FPR ≤ x), not interpolated.
+
+## Larger n (optional cell)
+
+`RUN_LARGE = True` trains a second model on `n_member = 5000` with the same
+number of optimizer steps (about the same time again) and overlays its ROC:
+the signal mostly vanishes (AUROC ≈ 0.52 in our test run at 4000 steps per
+model). That is a cheaper comparison than the research
+run's, which trained every model for the same number of *epochs*; the
+notebook explains the difference and how to match it (10× longer).
 
 ## CIFAR-10
 
-Downloaded (if not already present) to the research repo's own `data/`
-directory, never into this repo — Krizhevsky, 2009, freely usable for
-research.
+Downloaded by torchvision to `./data` on first run (~170 MB) — Krizhevsky,
+2009, freely usable for research.
 
 ## Exercises
 
-1. Vary `--t-edit` (0.10, 0.25, 0.50, 0.75) and watch the member/non-member
-   gap shrink at the extremes (§16 of RESULTS.md — t_edit is a bifurcation
-   parameter, sharpest at 0.25).
-2. Reproduce the "iterating does not help" negative result: run the loop for
-   several steps (`T_max > 1` in `sdedit_loop_with_snapshots`) and watch AUROC
-   decay instead of grow (H4, falsified in §14).
-3. Try `incep_drift` or `incep_cosine` instead of `pixel_mse` as the score
-   (see `experiments/single_shot_auroc_ddpm.py::per_sample_scalars`) — on
-   CIFAR these track pixel-MSE closely, but need an Inception-V3 forward pass.
+At the end of the notebook: training budget vs. AUROC, iterating the
+round-trip (it does not help), the `t_edit` sweet spot, and what this gate
+means for reporting MIA results in project P3.
